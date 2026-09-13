@@ -1,0 +1,6 @@
+{
+  "name": "PrepOS",
+  "description": "Smooth native study notes application with continuous document editing, paper styles, rich study content, reading progress tracking, and intelligent selection AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
