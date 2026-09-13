@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 import java.util.UUID
 
 data class ActiveFormattingState(
@@ -98,22 +99,20 @@ class PrepOSViewModel(application: Application) : AndroidViewModel(application) 
     private fun syncUnifiedProgression() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val totalXp = repository.getTotalXpSync()
-                if (totalXp == 0L) {
-                    val prefs = repository.getPreferencesSync()
-                    val tests: List<com.example.data.entity.TestAttemptEntity> = repository.allTestAttempts.firstOrNull() ?: emptyList()
-                    val chapters: List<ChapterEntity> = repository.getAllChaptersSync()
-                    val completedChapters = chapters.filter { it.readingProgress >= 0.98f }
-                    val totalHistoricalStudyMinutes = repository.getAllDailyStudyLogsSync().sumOf { it.totalFocusedMinutes }
-                    val seedEvents = com.example.util.ProgressionEngine.generateLegacySeedEvents(
-                        testAttempts = tests,
-                        completedChapters = completedChapters,
-                        preferences = prefs,
-                        totalHistoricalStudyMinutes = maxOf(totalHistoricalStudyMinutes, prefs.todayFocusedMinutes + prefs.yesterdayFocusedMinutes)
-                    )
-                    if (seedEvents.isNotEmpty()) {
-                        repository.recordXpEvents(seedEvents)
-                    }
+                val prefs = repository.getPreferencesSync()
+                val tests: List<com.example.data.entity.TestAttemptEntity> = repository.allTestAttempts.firstOrNull() ?: emptyList()
+                val chapters: List<ChapterEntity> = repository.getAllChaptersSync()
+                val completedChapters = chapters.filter { it.readingProgress >= 0.98f }
+                val dailyLogs = repository.getAllDailyStudyLogsSync()
+
+                val realEvents = com.example.util.ProgressionEngine.generateGranularEventsFromRealData(
+                    dailyLogs = dailyLogs,
+                    testAttempts = tests,
+                    completedChapters = completedChapters,
+                    preferences = prefs
+                )
+                if (realEvents.isNotEmpty()) {
+                    repository.recordXpEvents(realEvents)
                 }
             } catch (e: Exception) {
                 // Ignore failure
@@ -243,11 +242,11 @@ class PrepOSViewModel(application: Application) : AndroidViewModel(application) 
 
     val progressionOverview: StateFlow<com.example.model.ProgressionOverview> = combine(
         repository.totalVerifiedXp,
-        repository.recentXpEvents,
+        repository.allXpEvents,
         repository.preferences,
         repository.allTestAttempts,
         repository.allChapters
-    ) { totalXp: Long, recentEvents: List<com.example.data.entity.ProgressXpEntity>, prefs: UserPreferencesEntity?, testAttempts: List<com.example.data.entity.TestAttemptEntity>, chapters: List<ChapterEntity> ->
+    ) { totalXp: Long, allEvents: List<com.example.data.entity.ProgressXpEntity>, prefs: UserPreferencesEntity?, testAttempts: List<com.example.data.entity.TestAttemptEntity>, chapters: List<ChapterEntity> ->
         val safeTotalXp = totalXp.coerceAtLeast(0L)
         val rankProg = com.example.model.calculateRankProgress(safeTotalXp)
         val streak = prefs?.currentStreak ?: 0
@@ -255,7 +254,21 @@ class PrepOSViewModel(application: Application) : AndroidViewModel(application) 
         val completedChaptersCount = chapters.count { it.readingProgress >= 0.98f }
         val totalStudyMinutes = prefs?.todayFocusedMinutes ?: 0
 
-        val unlockedIds = recentEvents
+        val todayStart = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        val todayEvents = allEvents.filter { it.createdAt >= todayStart }
+        val todayTotalXp = todayEvents.sumOf { it.xp }.toLong()
+        val todayStudyMinutesXp = todayEvents
+            .filter { it.type in listOf(com.example.model.ProgressEventType.STUDY_MINUTE.name, com.example.model.ProgressEventType.REVISION_SESSION.name) }
+            .sumOf { it.xp }
+            .toLong()
+
+        val unlockedIds = allEvents
             .filter { it.type == com.example.model.ProgressEventType.ACHIEVEMENT_UNLOCKED.name }
             .mapNotNull { it.sourceId }
             .toSet()
@@ -286,10 +299,10 @@ class PrepOSViewModel(application: Application) : AndroidViewModel(application) 
             longestStreak = longestStreak,
             unlockedAchievementsCount = unlockedCount,
             totalAchievementsCount = com.example.util.ProgressionEngine.ALL_ACHIEVEMENTS.size,
-            todayTotalXp = safeTotalXp,
-            todayStudyMinutesXp = (prefs?.todayFocusedMinutes ?: 0).coerceAtMost(300).toLong(),
+            todayTotalXp = todayTotalXp,
+            todayStudyMinutesXp = todayStudyMinutesXp,
             maxDailyStudyXp = com.example.util.ProgressionEngine.MAX_DAILY_STUDY_XP,
-            recentEvents = recentEvents,
+            recentEvents = allEvents,
             achievements = achievements
         )
     }.stateIn(

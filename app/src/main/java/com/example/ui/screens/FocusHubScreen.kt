@@ -179,6 +179,8 @@ fun FocusHubScreen(
     var showNotificationBehaviorDialog by remember { mutableStateOf(false) }
     var showPracticeSheet by remember { mutableStateOf(false) }
     var showTasksDetailSheet by remember { mutableStateOf(false) }
+    var tasksSheetInitialTab by remember { mutableStateOf(0) }
+    var showStreakMilestonesDialog by remember { mutableStateOf(false) }
     var showRoadmapModal by remember { mutableStateOf(false) }
     var taskPendingDelete by remember { mutableStateOf<StudyTaskEntity?>(null) }
 
@@ -501,9 +503,23 @@ fun FocusHubScreen(
                         progression = progressionOverview,
                         todayStudiedMinutes = todayStudiedMinutes,
                         todayTargetMinutes = todayTargetMinutes,
-                        onOpenTasks = { showTasksDetailSheet = true },
-                        onOpenRoadmap = { showRoadmapModal = true },
-                        onTestStreak = { viewModel.setStreakForTesting(it) }
+                        onOpenTasks = {
+                            tasksSheetInitialTab = 0
+                            showTasksDetailSheet = true
+                        },
+                        onOpenRoadmap = {
+                            tasksSheetInitialTab = 1
+                            showTasksDetailSheet = true
+                        },
+                        onStreakClick = { showStreakMilestonesDialog = true },
+                        timeScope = selectedTimeScope,
+                        scopeStudyMinutes = when (selectedTimeScope) {
+                            FocusTimeScope.SELECTED_DAY -> studiedMinutesForDate
+                            FocusTimeScope.THIS_WEEK -> weeklyStudiedMinutes
+                            FocusTimeScope.THIS_MONTH -> monthlyStudiedMinutes
+                            FocusTimeScope.ALL_TIME -> allTimeStudiedMinutes
+                        },
+                        onSelectTimeScope = { selectedTimeScope = it }
                     )
                 }
 
@@ -934,7 +950,7 @@ fun FocusHubScreen(
                 }
             }
 
-            // Tasks Detail Sheet (from [☷ Tasks] on Rank Card)
+            // Tasks Detail Sheet (from [☷ Tasks] or Rank Crest on Rank Card)
             if (showTasksDetailSheet) {
                 TasksDetailSheet(
                     todayTasks = todayTasks,
@@ -942,6 +958,7 @@ fun FocusHubScreen(
                     todayStudiedMinutes = todayStudiedMinutes,
                     todayTargetMinutes = todayTargetMinutes,
                     progression = progressionOverview,
+                    initialTab = tasksSheetInitialTab,
                     onToggleTaskComplete = { taskId, done ->
                         viewModel.toggleTaskCompletion(taskId, todayKey, done)
                     },
@@ -949,8 +966,19 @@ fun FocusHubScreen(
                         viewModel.startFocusSession(task)
                     },
                     onAddTask = { showAddTaskDialog = true },
-                    onOpenRoadmap = { showRoadmapModal = true },
+                    onOpenRoadmap = {
+                        tasksSheetInitialTab = 1
+                        showTasksDetailSheet = true
+                    },
                     onDismiss = { showTasksDetailSheet = false }
+                )
+            }
+
+            // Streak & Milestones Info Dialog (from clicking Streak on Rank Card)
+            if (showStreakMilestonesDialog) {
+                MilestonesDialog(
+                    streak = progressionOverview.streakCount,
+                    onDismiss = { showStreakMilestonesDialog = false }
                 )
             }
 

@@ -1,6 +1,7 @@
 package com.example.util
 
 import com.example.data.entity.ChapterEntity
+import com.example.data.entity.DailyStudyLogEntity
 import com.example.data.entity.ProgressXpEntity
 import com.example.data.entity.TestAttemptEntity
 import com.example.data.entity.UserPreferencesEntity
@@ -685,6 +686,81 @@ object ProgressionEngine {
         if (streak >= 7) {
             createStreakMilestoneEvent(7)?.let { events.add(it) }
         }
+
+        return events
+    }
+
+    /**
+     * Reconciles ALL real historical data from Room database:
+     * - Daily study logs (each day with its exact dateKey, focus minutes, and daily target status)
+     * - Test attempts (with exact completedAt timestamps, question counts, and score accuracy)
+     * - Completed chapters
+     * - Real streak consistency milestones
+     *
+     * Ensures all XP in the ledger reflects exact historical dates rather than today's timestamp.
+     */
+    fun generateGranularEventsFromRealData(
+        dailyLogs: List<DailyStudyLogEntity>,
+        testAttempts: List<TestAttemptEntity>,
+        completedChapters: List<ChapterEntity>,
+        preferences: UserPreferencesEntity?
+    ): List<ProgressXpEntity> {
+        val events = mutableListOf<ProgressXpEntity>()
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+
+        // 1. Reconcile daily study logs with real dateKey timestamps
+        for (log in dailyLogs) {
+            val logBaseTime = try {
+                sdf.parse(log.dateKey)?.time ?: log.updatedAt
+            } catch (e: Exception) {
+                log.updatedAt
+            }
+
+            if (log.totalFocusedMinutes > 0) {
+                val studyXp = log.totalFocusedMinutes.coerceAtMost(300)
+                events.add(
+                    ProgressXpEntity(
+                        id = "study:day:${log.dateKey}",
+                        type = ProgressEventType.STUDY_MINUTE.name,
+                        xp = studyXp,
+                        sourceId = log.dateKey,
+                        note = "Focus study on ${log.dateKey}: ${log.totalFocusedMinutes}m (+${studyXp} XP)",
+                        createdAt = logBaseTime + (18 * 3600 * 1000L) // mid-evening timestamp
+                    )
+                )
+            }
+
+            if (log.isTargetMet || (log.dailyTargetMinutes > 0 && log.totalFocusedMinutes >= log.dailyTargetMinutes)) {
+                events.add(
+                    ProgressXpEntity(
+                        id = "target:day:${log.dateKey}",
+                        type = ProgressEventType.DAILY_TARGET_COMPLETED.name,
+                        xp = 50,
+                        sourceId = log.dateKey,
+                        note = "Daily Target Met on ${log.dateKey} (+50 XP)",
+                        createdAt = logBaseTime + (20 * 3600 * 1000L)
+                    )
+                )
+            }
+        }
+
+        // 2. Reconcile real test attempts with exact completedAt, question counts, and accuracy
+        for (attempt in testAttempts) {
+            events.addAll(createTestCompletionEvents(attempt))
+        }
+
+        // 3. Reconcile completed chapters
+        for (chapter in completedChapters) {
+            events.add(createChapterCompletionEvent(chapter.id, chapter.title))
+        }
+
+        // 4. Streak consistency milestones based on real streak data
+        val streak = preferences?.currentStreak ?: 0
+        if (streak >= 3) createStreakMilestoneEvent(3)?.let { events.add(it) }
+        if (streak >= 7) createStreakMilestoneEvent(7)?.let { events.add(it) }
+        if (streak >= 14) createStreakMilestoneEvent(14)?.let { events.add(it) }
+        if (streak >= 30) createStreakMilestoneEvent(30)?.let { events.add(it) }
+        if (streak >= 100) createStreakMilestoneEvent(100)?.let { events.add(it) }
 
         return events
     }
